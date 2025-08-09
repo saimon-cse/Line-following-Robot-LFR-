@@ -1,30 +1,31 @@
-// --- Motor Pins ---
-#define IN1 9    // Left motor forward
-#define IN2 6    // Left motor backward
-#define IN3 10   // Right motor forward
-#define IN4 11   // Right motor backward
-#define sensorValue arr
+// --- Motor Pins (PWM on IN1 & IN3) ---
+#define IN1 9   // Left forward (PWM)
+#define IN2 6   // Left backward
+#define IN3 10  // Right forward (PWM)
+#define IN4 11  // Right backward
 
 // --- Sensor Pins ---
 int sensors[6] = {A0, A1, A2, A3, A4, A5};
 int sensorValue[6];
 
-// --- Sensor threshold ---
+// --- Sensor Threshold ---
 int threshold = 500; // Adjust based on testing
 
-unsigned long whiteTol = 90; // tolerance time in ms
-unsigned long whiteStart = 0;
+// --- PID Control ---
+float Kp = 20;   // Proportional constant
+float Kd = 8;    // Derivative constant
+int baseSpeed = 150; // Base motor speed (0-255)
+int lastError = 0;
 
-int lastPos = 0; // 1 = left, 2 = right
+// --- Weights for sensors ---
+int weights[6] = {-5, -3, -1, 1, 3, 5};
 
 void setup() {
-  // Motor pins
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
 
-  // Sensor pins
   for (int i = 0; i < 6; i++) {
     pinMode(sensors[i], INPUT);
   }
@@ -33,87 +34,49 @@ void setup() {
 }
 
 void loop() {
-  bool allWhite = true;
+  int error = 0, activeCount = 0;
 
-  // Read sensor values
+  // --- Read sensors & calculate position error ---
   for (int i = 0; i < 6; i++) {
     sensorValue[i] = (analogRead(sensors[i]) > threshold) ? 0 : 1;
-    if (sensorValue[i] == 1) allWhite = false; // Found black
+    if (sensorValue[i] == 1) {
+      error += weights[i];
+      activeCount++;
+    }
     Serial.print(sensorValue[i]);
     Serial.print(" ");
   }
   Serial.println();
 
-  // Update last position memory
-  if (sensorValue[0] && !sensorValue[5]) lastPos = 2; // right
-  if (!sensorValue[0] && sensorValue[5]) lastPos = 1; // left
-
-  // Movement logic
-  if (!allWhite) {
-    // Reset white tolerance timer
-    whiteStart = millis();
-
-
-    if (((sensorValue[2] * sensorValue[3]) || (sensorValue[4] * sensorValue[3]) || (arr[2]*arr[3]*arr[4])) && (arr[0]+arr[5]!=1)) {
-      forward();
-    }
-    else if (arr[5] || (arr[5] * arr[4]) ||(arr[5] * arr[4] * arr[3])) {
-      turnLeft();
-    }
-    else if (sensorValue[0] || (sensorValue[1] && sensorValue[0]) ||(arr[1] && arr[2]) || (arr[0] && arr[1] && arr[2])) {
-      turnRight();
-    }
-    else {
-      stopMotors();
-    }
-  }
-  else {
-    // All white detected
-    if (millis() - whiteStart < whiteTol) {
-      forward(); // keep moving straight within tolerance
-    }
-    else {
-      // After tolerance, follow last known direction
-      if (lastPos == 1) {
-        turnLeft();
-      }
-      else if (lastPos == 2) {
-        turnRight();
-      }
-      else {
-        stopMotors(); // if no memory, just stop
-      }
-    }
+  if (activeCount > 0) {
+    error /= activeCount;
   }
 
- delay(10);
+  // --- PID Calculation ---
+  int P = error * Kp;
+  int D = (error - lastError) * Kd;
+  int correction = P + D;
+
+  lastError = error;
+
+  // --- Motor speed adjustment ---
+  int leftSpeed = baseSpeed - correction;
+  int rightSpeed = baseSpeed + correction;
+
+  // Constrain PWM values
+  leftSpeed = constrain(leftSpeed, 0, 255);
+  rightSpeed = constrain(rightSpeed, 0, 255);
+
+  moveMotors(leftSpeed, rightSpeed);
 }
 
-// --- Movement Functions ---
-void forward() {
-  digitalWrite(IN1, HIGH); // Left forward
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, HIGH); // Right forward
-  digitalWrite(IN4, LOW);
-}
+// --- Motor Control Function ---
+void moveMotors(int leftPWM, int rightPWM) {
+  // Left motor forward
+  digitalWrite(IN2, LOW); // backward pin off
+  analogWrite(IN1, leftPWM);
 
-void turnLeft() {
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, HIGH);
-  digitalWrite(IN4, LOW);
-}
-
-void turnRight() {
-  digitalWrite(IN1, HIGH);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, LOW);
-}
-
-void stopMotors() {
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, LOW);
+  // Right motor forward
+  digitalWrite(IN4, LOW); // backward pin off
+  analogWrite(IN3, rightPWM);
 }
